@@ -1,50 +1,47 @@
-;; Loan Request Contract
+;; Lender Matching Contract
 
 ;; Constants
 (define-constant contract-owner tx-sender)
 (define-constant err-not-authorized (err u100))
-(define-constant err-invalid-amount (err u101))
-(define-constant err-invalid-term (err u102))
+(define-constant err-already-matched (err u101))
 
 ;; Data Maps
-(define-map loan-requests
-  { id: uint }
-  { borrower: principal, amount: uint, term: uint, status: (string-ascii 20) })
-
-(define-data-var next-loan-id uint u1)
+(define-map loan-matches
+  { loan-id: uint }
+  { lender: (optional principal), status: (string-ascii 20) })
 
 ;; Public Functions
-(define-public (create-loan-request (amount uint) (term uint))
-  (let ((loan-id (var-get next-loan-id)))
-    (if (and (> amount u0) (> term u0))
+(define-public (offer-loan (loan-id uint))
+  (let ((match (default-to { lender: none, status: "UNMATCHED" }
+                (map-get? loan-matches { loan-id: loan-id }))))
+    (if (is-eq (get status match) "UNMATCHED")
       (begin
-        (map-set loan-requests
-          { id: loan-id }
-          { borrower: tx-sender, amount: amount, term: term, status: "PENDING" })
-        (var-set next-loan-id (+ loan-id u1))
-        (ok loan-id))
-      err-invalid-amount)))
+        (map-set loan-matches
+          { loan-id: loan-id }
+          { lender: (some tx-sender), status: "MATCHED" })
+        (ok true))
+      err-already-matched)))
 
-(define-read-only (get-loan-request (id uint))
-  (map-get? loan-requests { id: id }))
+(define-read-only (get-loan-match (loan-id uint))
+  (map-get? loan-matches { loan-id: loan-id }))
 
-(define-public (cancel-loan-request (id uint))
-  (let ((request (unwrap! (get-loan-request id) err-not-authorized)))
-    (if (is-eq (get borrower request) tx-sender)
+(define-public (cancel-loan-offer (loan-id uint))
+  (let ((match (unwrap! (get-loan-match loan-id) err-not-authorized)))
+    (if (is-eq (some tx-sender) (get lender match))
       (begin
-        (map-set loan-requests
-          { id: id }
-          (merge request { status: "CANCELLED" }))
+        (map-set loan-matches
+          { loan-id: loan-id }
+          { lender: none, status: "UNMATCHED" })
         (ok true))
       err-not-authorized)))
 
 ;; Admin Functions
-(define-public (update-loan-status (id uint) (new-status (string-ascii 20)))
+(define-public (finalize-match (loan-id uint))
   (if (is-eq tx-sender contract-owner)
-    (let ((request (unwrap! (get-loan-request id) err-not-authorized)))
-      (map-set loan-requests
-        { id: id }
-        (merge request { status: new-status }))
+    (let ((match (unwrap! (get-loan-match loan-id) err-not-authorized)))
+      (map-set loan-matches
+        { loan-id: loan-id }
+        (merge match { status: "FINALIZED" }))
       (ok true))
     err-not-authorized))
 
